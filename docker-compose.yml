@@ -1,0 +1,49 @@
+services:
+  backend:
+    build: ./backend
+    container_name: gridforge-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      - mysql
+
+  frontend:
+    build: ./frontend
+    container_name: gridforge-frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - ./backend/public/css:/output
+
+  mysql:
+    image: mysql:8
+    container_name: gridforge-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: devroot_change_me
+      MYSQL_DATABASE: gridforge
+      MYSQL_USER: gridforge
+      MYSQL_PASSWORD: devpass_change_me
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: gridforge-phpmyadmin
+    restart: always
+    environment:
+      PMA_HOST: mysql
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+
+volumes:
+  mysql_data:
