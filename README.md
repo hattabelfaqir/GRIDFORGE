@@ -5,11 +5,13 @@
 Le repo `GRIDFORGE` est actuellement vide (juste un `git init`). L'objectif n'est **pas** que je code le site — c'est explicitement demandé de ne pas le faire, sauf pour corriger un bug ponctuel plus tard. Ce document est donc **le livrable final** : un dossier de spécification technique complet (archi, stack, modèle de données, flux de paiement/livraison, sécurité, feuille de route) que tu pourras suivre pour coder toi-même la boutique.
 
 Le site doit vendre des bases FiveM, des bots Discord liés à FiveM, et des configurations Discord. Les points durs identifiés :
+
 - Compte classique email/mot de passe, **mais** obligation de lier un compte Discord avant tout achat, et ce Discord doit être unique (un seul compte site par Discord).
 - Livraison automatique après paiement (fichier à télécharger + accès depuis le compte).
 - Verrouillage des scripts vendus à la license FiveM du serveur acheteur (mesure anti-partage standard dans l'écosystème FiveM payant).
 
 Décisions déjà validées avec toi :
+
 - **Stack** : Node.js + Express + rendu serveur (EJS) + JS vanilla côté client — pas de framework front lourd.
 - **Identité** : Discord OAuth obligatoire pour le login/l'unicité de compte, **+** capture de la license FiveM du serveur client pour verrouiller les scripts livrés.
 - **Paiement** : Stripe (Checkout hébergé, pas de formulaire carte custom).
@@ -34,21 +36,21 @@ Il n'existe **aucun bouton officiel "Se connecter avec FiveM"** utilisable par u
 
 ## 1. Stack technique détaillée
 
-| Brique | Choix | Pourquoi |
-|---|---|---|
-| Runtime / serveur | Node.js + Express | Choisi par toi, proche de ce que tu connais déjà (JS). |
-| Rendu des pages | EJS (templates HTML + JS server-side) | Pas besoin d'apprendre React ; tu gardes HTML/CSS/JS classiques. |
-| Base de données | PostgreSQL (Neon ou Supabase, plan gratuit) | Managé = pas de sysadmin DB à gérer. |
-| Accès BDD | Prisma ORM | Évite les erreurs SQL manuelles, migrations versionnées, autocomplétion — bon compromis pour un débutant. |
-| Auth email/mdp | `bcrypt` (hash) + `express-session` | Standard, bien documenté. |
-| Stockage session | `connect-pg-simple` (sessions en Postgres, pas en RAM) | **Obligatoire sur Vercel** : le serverless ne garde pas de mémoire entre les requêtes. |
-| Login Discord | `passport-discord` (stratégie Passport.js) | OAuth Discord officiel, très simple à brancher. |
-| Paiement | Stripe Checkout + Webhooks | Page de paiement hébergée par Stripe = zéro formulaire carte à sécuriser toi-même. |
-| Email transactionnel | Resend (ou Postmark) | API simple, gratuit jusqu'à un bon volume, bonne délivrabilité (important pour ne pas finir en spam). |
-| Stockage des fichiers vendus | Vercel Blob ou Supabase Storage | Pas de gros fichiers en pièce jointe email — juste des liens signés temporaires. |
-| Validation des entrées | `zod` | Empêche les données mal formées d'atteindre la base. |
-| Sécurité HTTP | `helmet`, `express-rate-limit`, `csurf` (ou double-submit CSRF token) | Voir section Sécurité. |
-| Bots Discord | `discord.js` | Pour la livraison de rôle auto / notifications d'achat côté Discord. |
+| Brique                       | Choix                                                                 | Pourquoi                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Runtime / serveur            | Node.js + Express                                                     | Choisi par toi, proche de ce que tu connais déjà (JS).                                                    |
+| Rendu des pages              | EJS (templates HTML + JS server-side)                                 | Pas besoin d'apprendre React ; tu gardes HTML/CSS/JS classiques.                                          |
+| Base de données              | PostgreSQL (Neon ou Supabase, plan gratuit)                           | Managé = pas de sysadmin DB à gérer.                                                                      |
+| Accès BDD                    | Prisma ORM                                                            | Évite les erreurs SQL manuelles, migrations versionnées, autocomplétion — bon compromis pour un débutant. |
+| Auth email/mdp               | `bcrypt` (hash) + `express-session`                                   | Standard, bien documenté.                                                                                 |
+| Stockage session             | `connect-pg-simple` (sessions en Postgres, pas en RAM)                | **Obligatoire sur Vercel** : le serverless ne garde pas de mémoire entre les requêtes.                    |
+| Login Discord                | `passport-discord` (stratégie Passport.js)                            | OAuth Discord officiel, très simple à brancher.                                                           |
+| Paiement                     | Stripe Checkout + Webhooks                                            | Page de paiement hébergée par Stripe = zéro formulaire carte à sécuriser toi-même.                        |
+| Email transactionnel         | Resend (ou Postmark)                                                  | API simple, gratuit jusqu'à un bon volume, bonne délivrabilité (important pour ne pas finir en spam).     |
+| Stockage des fichiers vendus | Vercel Blob ou Supabase Storage                                       | Pas de gros fichiers en pièce jointe email — juste des liens signés temporaires.                          |
+| Validation des entrées       | `zod`                                                                 | Empêche les données mal formées d'atteindre la base.                                                      |
+| Sécurité HTTP                | `helmet`, `express-rate-limit`, `csurf` (ou double-submit CSRF token) | Voir section Sécurité.                                                                                    |
+| Bots Discord                 | `discord.js`                                                          | Pour la livraison de rôle auto / notifications d'achat côté Discord.                                      |
 
 ---
 
@@ -89,6 +91,7 @@ webhook_events_log
 ```
 
 Contraintes clés à mettre en base (pas juste côté code) :
+
 - `users.discord_id` → `UNIQUE` → empêche de relier deux comptes site au même Discord.
 - `fivem_licenses.license_identifier` → `UNIQUE` → empêche de relier la même license FiveM à deux comptes.
 - `orders.stripe_checkout_session_id` → `UNIQUE` + `webhook_events_log.stripe_event_id` → `UNIQUE` → empêche la double-livraison si Stripe renvoie le même webhook deux fois (ça arrive, c'est normal côté Stripe).
@@ -98,17 +101,20 @@ Contraintes clés à mettre en base (pas juste côté code) :
 ## 3. Flux détaillés
 
 ### 3.1 Inscription / connexion classique
+
 1. Formulaire email + mot de passe → hash avec `bcrypt` (cost factor 12) → ligne `users`.
 2. Email de vérification (recommandé, évite les faux comptes) via Resend.
 3. Connexion → session créée, cookie `httpOnly; secure; sameSite=lax`, stockée en Postgres via `connect-pg-simple`.
 
 ### 3.2 Liaison Discord (obligatoire avant achat)
+
 1. Bouton "Lier mon Discord" → redirection OAuth Discord (`passport-discord`).
 2. Callback : Discord renvoie l'`id` Discord de l'utilisateur.
 3. Avant d'écrire en base : vérifier qu'aucun autre `users` n'a déjà ce `discord_id`. Si déjà pris → message clair ("ce Discord est déjà lié à un autre compte") plutôt qu'une erreur SQL brute.
 4. Middleware `requireDiscordLinked` sur toutes les routes d'achat — redirige vers la page de liaison si `discord_id` est null.
 
 ### 3.3 Liaison de la license FiveM (pour les produits "script")
+
 1. Le client doit indiquer quel serveur FiveM va utiliser le script.
 2. Deux options possibles à lui proposer (tu choisis laquelle exposer, ou les deux) :
    - **Option simple** : il colle lui-même sa license key de serveur (visible sur `keymaster.fivem.net`, ex: `cfxk_XXXX...`), tu la stockes telle quelle. Facile à coder, mais déclaratif — rien n'empêche l'utilisateur d'en mettre une fausse au moment de l'achat (le vrai contrôle se fait ensuite à l'exécution, voir 3.5).
@@ -116,6 +122,7 @@ Contraintes clés à mettre en base (pas juste côté code) :
 3. Contrainte `UNIQUE` en base empêche la réutilisation sur plusieurs comptes.
 
 ### 3.4 Achat (Stripe Checkout)
+
 1. `POST /checkout/:productSlug` (utilisateur connecté + Discord lié) → crée une session Stripe Checkout côté serveur avec `metadata: { user_id, product_id }` → redirige le client vers la page Stripe.
 2. Stripe redirige vers une page `/merci` après paiement.
 3. **La livraison ne se fait jamais depuis cette redirection** (elle n'est pas fiable — l'utilisateur peut fermer l'onglet avant). Elle se fait uniquement via le webhook.
@@ -129,11 +136,13 @@ Contraintes clés à mettre en base (pas juste côté code) :
    - Débloquer l'accès dans l'espace "Mes achats" du compte (c'est le canal de livraison principal — l'email est une sauvegarde).
 
 ### 3.5 Téléchargement sécurisé
+
 - `GET /download/:token` → vérifie que le token existe, n'est pas expiré, `use_count < max_uses`, et correspond bien à un achat de l'utilisateur connecté (double vérification : token + session).
 - Incrémente `use_count`, stream le fichier depuis Vercel Blob / Supabase Storage.
 - Jamais de fichier livré en pièce jointe email (limite de taille + pas de lien fiable derrière).
 
 ### 3.6 Vérification anti-partage côté script FiveM livré
+
 - Le script vendu contient un petit appel réseau au démarrage (`fetch`/`PerformHttpRequest` en Lua) vers `POST /api/license/verify` avec `{ key_value, server_license }`.
 - Ton API répond `valid: true/false`. Si `false`, le script s'arrête (`return`) au lieu de charger — pattern standard dans l'écosystème des scripts FiveM payants.
 - Logger chaque vérification (IP, timestamp) pour repérer un usage anormal (même clé utilisée depuis trop de licenses différentes = signe de clé fuitée/partagée).
@@ -211,7 +220,7 @@ Contraintes clés à mettre en base (pas juste côté code) :
 ## 7. Volet légal (France) — à ne pas zapper
 
 - **Statut** : pour encaisser de l'argent légalement (Stripe le demandera au moment du KYC), il faut au minimum un statut auto-entrepreneur.
-- **Mentions légales + CGV** obligatoires sur un site marchand français (identité du vendeur, conditions de vente, droit de rétractation — attention : pour du contenu numérique livré immédiatement, la loi permet de faire renoncer le client au droit de rétractation de 14 jours *s'il le confirme explicitement à l'achat*, sinon il pourrait légalement demander un remboursement après avoir déjà téléchargé le fichier).
+- **Mentions légales + CGV** obligatoires sur un site marchand français (identité du vendeur, conditions de vente, droit de rétractation — attention : pour du contenu numérique livré immédiatement, la loi permet de faire renoncer le client au droit de rétractation de 14 jours _s'il le confirme explicitement à l'achat_, sinon il pourrait légalement demander un remboursement après avoir déjà téléchargé le fichier).
 - **RGPD** : tu stockes emails, mots de passe (hashés), IDs Discord, IPs (dans les logs de vérification) → il faut une politique de confidentialité, et un moyen de suppression de compte. Attention à la tension avec la compta : les factures/commandes doivent être gardées un certain nombre d'années même si le compte utilisateur est supprimé — anonymiser plutôt que supprimer les lignes `orders`.
 - **TVA** : au-delà d'un certain seuil de chiffre d'affaires en auto-entrepreneur, la TVA doit être facturée — Stripe Tax peut automatiser ce calcul si besoin.
 - **Écosystème FiveM/Cfx.re** : Cfx.re a ses propres règles sur la revente de ressources (notamment le système d'escrow officiel). Vérifie que les scripts que tu vends respectent les conditions d'utilisation de Cfx.re avant de les mettre en vente (au-delà du strict aspect technique de ce plan).
